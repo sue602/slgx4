@@ -168,6 +168,47 @@ public final class GridMap {
         return Optional.of(new TerritoryRegion(faction, region));
     }
 
+    /**
+     * 判断格子加入后能否连接到阵营的任意四连通区域块。
+     * 失联区域也属于阵营区域，因此与失联区域相邻时同样返回 true。
+     */
+    public boolean canConnectToFaction(GridPoint point, Faction faction) {
+        if (!isValidConnectionCandidate(point, faction)) {
+            return false;
+        }
+        if (ownerAt(point) == faction) {
+            return true;
+        }
+        return neighbors4(point).stream()
+                .anyMatch(neighbor -> !isBlocked(neighbor) && ownerAt(neighbor) == faction);
+    }
+
+    /**
+     * 判断格子加入后能否连接到阵营主城所在的有效四连通领土。
+     * 仅与失联区域相邻不算连接；该格可作为桥梁连接有效领土与失联区域。
+     */
+    public boolean canConnectToCoreTerritory(GridPoint point, Faction faction) {
+        if (!isValidConnectionCandidate(point, faction)) {
+            return false;
+        }
+        Set<GridPoint> connected = new LinkedHashSet<>(connectedOwnedPoints(faction));
+        if (connected.isEmpty()) {
+            return false;
+        }
+        if (ownerAt(point) == faction) {
+            return connected.contains(point);
+        }
+        return neighbors4(point).stream().anyMatch(connected::contains);
+    }
+
+    private boolean isValidConnectionCandidate(GridPoint point, Faction faction) {
+        if (!contains(point) || faction == null || faction == Faction.NONE || isBlocked(point)) {
+            return false;
+        }
+        Faction currentOwner = ownerAt(point);
+        return currentOwner == Faction.NONE || currentOwner == faction;
+    }
+
     private Set<GridPoint> collectOwnedRegion(GridPoint start, Faction faction, Set<GridPoint> visited) {
         Set<GridPoint> region = new LinkedHashSet<>();
         Queue<GridPoint> queue = new ArrayDeque<>();

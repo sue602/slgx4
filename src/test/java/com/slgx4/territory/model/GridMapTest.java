@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -79,6 +80,42 @@ class GridMapTest {
         assertTrue(map.ownedRegionAt(new GridPoint(2, 0)).isEmpty());
         assertTrue(map.ownedRegionAt(new GridPoint(-1, 0)).isEmpty());
         assertTrue(map.ownedRegionAt(null).isEmpty());
+    }
+
+    @Test
+    void connectsCandidateToAnyFactionRegionIncludingDisconnectedIsland() {
+        GridMap map = territoryWithDisconnectedIsland();
+
+        assertTrue(map.canConnectToFaction(new GridPoint(2, 1), Faction.BLUE));
+        assertTrue(map.canConnectToFaction(new GridPoint(3, 1), Faction.BLUE));
+        assertTrue(map.canConnectToFaction(new GridPoint(4, 1), Faction.BLUE));
+        assertFalse(map.canConnectToFaction(new GridPoint(2, 0), Faction.BLUE));
+    }
+
+    @Test
+    void connectsCandidateOnlyToCoreEffectiveTerritory() {
+        GridMap map = territoryWithDisconnectedIsland();
+
+        assertTrue(map.canConnectToCoreTerritory(new GridPoint(2, 1), Faction.BLUE));
+        assertFalse(map.canConnectToCoreTerritory(new GridPoint(3, 1), Faction.BLUE));
+        assertFalse(map.canConnectToCoreTerritory(new GridPoint(4, 1), Faction.BLUE));
+        assertTrue(map.canConnectToCoreTerritory(new GridPoint(1, 1), Faction.BLUE));
+    }
+
+    @Test
+    void rejectsInvalidConnectionCandidates() {
+        GridMap map = territoryWithDisconnectedIsland();
+        map.setBlocked(new GridPoint(2, 1), true);
+        map.setOwner(new GridPoint(3, 1), Faction.RED);
+
+        assertFalse(map.canConnectToFaction(new GridPoint(2, 1), Faction.BLUE));
+        assertFalse(map.canConnectToCoreTerritory(new GridPoint(2, 1), Faction.BLUE));
+        assertFalse(map.canConnectToFaction(new GridPoint(3, 1), Faction.BLUE));
+        assertFalse(map.canConnectToCoreTerritory(new GridPoint(3, 1), Faction.BLUE));
+        assertFalse(map.canConnectToFaction(new GridPoint(-1, 0), Faction.BLUE));
+        assertFalse(map.canConnectToFaction(null, Faction.BLUE));
+        assertFalse(map.canConnectToFaction(new GridPoint(0, 1), Faction.NONE));
+        assertFalse(map.canConnectToFaction(new GridPoint(0, 1), null));
     }
 
     private static GridMap territoryWithDisconnectedIsland() {
