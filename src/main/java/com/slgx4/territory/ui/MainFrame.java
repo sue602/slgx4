@@ -2,11 +2,15 @@ package com.slgx4.territory.ui;
 
 import com.slgx4.territory.algorithm.ConvexHull;
 import com.slgx4.territory.algorithm.FloodFill;
+import com.slgx4.territory.algorithm.MonsterSearch;
+import com.slgx4.territory.algorithm.MonsterSearchResult;
 import com.slgx4.territory.algorithm.TerritoryComponents;
 import com.slgx4.territory.algorithm.VoronoiTerritory;
 import com.slgx4.territory.model.Faction;
 import com.slgx4.territory.model.GridMap;
 import com.slgx4.territory.model.GridPoint;
+import com.slgx4.territory.model.Monster;
+import com.slgx4.territory.model.MonsterType;
 import com.slgx4.territory.model.Outpost;
 
 import javax.swing.BorderFactory;
@@ -17,6 +21,7 @@ import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSeparator;
@@ -53,12 +58,14 @@ public final class MainFrame extends JFrame {
 
     private final GridMap map = new GridMap(28, 18);
     private final List<Outpost> outposts = new ArrayList<>();
+    private final List<Monster> monsters = new ArrayList<>();
     private final Map<InteractionMode, JToggleButton> modeButtons = new EnumMap<>(InteractionMode.class);
-    private final MapPanel mapPanel = new MapPanel(map, outposts);
+    private final MapPanel mapPanel = new MapPanel(map, outposts, monsters);
     private final JComboBox<Faction> factionBox = new JComboBox<>(new Faction[]{Faction.BLUE, Faction.RED});
     private final JSpinner radiusSpinner = new JSpinner(new SpinnerNumberModel(4, 1, 10, 1));
     private final JLabel modeHintLabel = new JLabel();
     private final JLabel statsLabel = new JLabel();
+    private final JTextArea monsterResultArea = new JTextArea();
     private final JTextArea eventLog = new JTextArea();
 
     private InteractionMode mode = InteractionMode.BFS_EXPAND;
@@ -95,7 +102,7 @@ public final class MainFrame extends JFrame {
         JLabel title = new JLabel("SLG 联盟领土算法实验室");
         title.setForeground(TEXT);
         title.setFont(title.getFont().deriveFont(Font.BOLD, 22f));
-        JLabel subtitle = new JLabel("BFS · 连通性 · Union-Find · Marching Squares · Convex Hull · Voronoi");
+        JLabel subtitle = new JLabel("BFS · 连通性 · Union-Find · Marching Squares · Convex Hull · Voronoi · 范围搜索");
         subtitle.setForeground(MUTED_TEXT);
         subtitle.setFont(subtitle.getFont().deriveFont(12f));
         titleBox.add(title);
@@ -107,7 +114,7 @@ public final class MainFrame extends JFrame {
         legend.setOpaque(false);
         legend.add(legendItem(Faction.BLUE));
         legend.add(legendItem(Faction.RED));
-        JLabel legendText = new JLabel("◆ 主城    △ 哨塔    ▲ 山脉");
+        JLabel legendText = new JLabel("◆ 主城    △ 哨塔    ▲ 山脉    ○ 怪物");
         legendText.setForeground(MUTED_TEXT);
         legend.add(legendText);
         header.add(legend, BorderLayout.EAST);
@@ -148,7 +155,7 @@ public final class MainFrame extends JFrame {
         sidebar.add(Box.createVerticalStrut(20));
         sidebar.add(sectionTitle("地图点击工具"));
         sidebar.add(Box.createVerticalStrut(9));
-        JPanel modes = new JPanel(new GridLayout(3, 2, 8, 8));
+        JPanel modes = new JPanel(new GridLayout(0, 2, 8, 8));
         modes.setOpaque(false);
         ButtonGroup modeGroup = new ButtonGroup();
         for (InteractionMode candidate : InteractionMode.values()) {
@@ -205,6 +212,26 @@ public final class MainFrame extends JFrame {
         sidebar.add(statsLabel);
 
         sidebar.add(Box.createVerticalStrut(14));
+        sidebar.add(sectionTitle("怪物搜索结果"));
+        sidebar.add(Box.createVerticalStrut(8));
+        monsterResultArea.setEditable(false);
+        monsterResultArea.setLineWrap(true);
+        monsterResultArea.setWrapStyleWord(true);
+        monsterResultArea.setRows(4);
+        monsterResultArea.setBackground(CARD_BACKGROUND);
+        monsterResultArea.setForeground(new Color(224, 211, 145));
+        monsterResultArea.setBorder(BorderFactory.createEmptyBorder(9, 10, 9, 10));
+        monsterResultArea.setFont(monsterResultArea.getFont().deriveFont(12f));
+        JScrollPane monsterScroll = new JScrollPane(monsterResultArea);
+        monsterScroll.setBorder(BorderFactory.createEmptyBorder());
+        monsterScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        monsterScroll.setAlignmentX(Component.LEFT_ALIGNMENT);
+        monsterScroll.setPreferredSize(new Dimension(290, 108));
+        monsterScroll.setMinimumSize(new Dimension(290, 90));
+        monsterScroll.setMaximumSize(new Dimension(Integer.MAX_VALUE, 125));
+        sidebar.add(monsterScroll);
+
+        sidebar.add(Box.createVerticalStrut(14));
         sidebar.add(sectionTitle("操作记录"));
         sidebar.add(Box.createVerticalStrut(8));
         eventLog.setEditable(false);
@@ -221,6 +248,7 @@ public final class MainFrame extends JFrame {
         logScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         logScroll.setAlignmentX(Component.LEFT_ALIGNMENT);
         logScroll.setPreferredSize(new Dimension(290, 120));
+        logScroll.setMinimumSize(new Dimension(290, 90));
         logScroll.setMaximumSize(new Dimension(Integer.MAX_VALUE, 140));
         sidebar.add(logScroll);
         sidebar.add(Box.createVerticalGlue());
@@ -245,7 +273,71 @@ public final class MainFrame extends JFrame {
             case OBSTACLE -> toggleObstacle(point);
             case OUTPOST -> placeOutpost(point, faction);
             case CORE -> placeCore(point, faction);
+            case MONSTER_SEARCH -> searchMonstersFrom(point);
         }
+    }
+
+    private void searchMonstersFrom(GridPoint center) {
+        List<MonsterTypeOption> options = new ArrayList<>();
+        options.add(new MonsterTypeOption(null, "全部类型"));
+        for (MonsterType type : MonsterType.values()) {
+            options.add(new MonsterTypeOption(type, type.displayName()));
+        }
+        JComboBox<MonsterTypeOption> typeBox = new JComboBox<>(options.toArray(MonsterTypeOption[]::new));
+        styleComboBox(typeBox);
+        JSpinner searchRadius = new JSpinner(new SpinnerNumberModel(5, 0, 20, 1));
+        styleSpinner(searchRadius);
+
+        JPanel form = new JPanel(new GridLayout(3, 2, 10, 10));
+        form.setBorder(BorderFactory.createEmptyBorder(8, 6, 8, 6));
+        form.add(new JLabel("搜索中心"));
+        form.add(new JLabel(coordinate(center)));
+        form.add(new JLabel("怪物类型"));
+        form.add(typeBox);
+        form.add(new JLabel("半径 R"));
+        form.add(searchRadius);
+
+        int choice = JOptionPane.showOptionDialog(this, form, "怪物范围搜索",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null,
+                new Object[]{"搜索", "取消"}, "搜索");
+        if (choice != 0) {
+            return;
+        }
+
+        MonsterTypeOption selected = (MonsterTypeOption) typeBox.getSelectedItem();
+        MonsterType type = selected == null ? null : selected.type();
+        int radius = (int) searchRadius.getValue();
+        List<MonsterSearchResult> results = MonsterSearch.withinRadius(monsters, center, radius, type);
+        mapPanel.showMonsterSearch(center, radius, type, results.stream()
+                .map(MonsterSearchResult::monster)
+                .toList());
+        showMonsterResults(center, radius, type, results);
+    }
+
+    private void showMonsterResults(GridPoint center, int radius, MonsterType type,
+                                    List<MonsterSearchResult> results) {
+        String typeName = type == null ? "全部类型" : type.displayName();
+        StringBuilder text = new StringBuilder();
+        text.append("中心 ").append(coordinate(center))
+                .append("　R=").append(radius)
+                .append("　").append(typeName)
+                .append("\n命中 ").append(results.size()).append(" 个：");
+        for (MonsterSearchResult result : results) {
+            Monster monster = result.monster();
+            text.append("\n")
+                    .append("d=").append(result.distance()).append("　")
+                    .append("[").append(monster.type().displayName()).append("] ")
+                    .append(monster.name()).append(" Lv.").append(monster.level())
+                    .append(" ").append(coordinate(monster.position()));
+        }
+        if (results.isEmpty()) {
+            text.append("\n搜索范围内没有符合条件的怪物。");
+        }
+        monsterResultArea.setText(text.toString());
+        monsterResultArea.setCaretPosition(0);
+        mapPanel.setOverlayText("怪物搜索｜" + typeName + " · R=" + radius + " · 命中 " + results.size() + " 个");
+        appendEvent("怪物搜索完成：以 " + coordinate(center) + " 为中心，R=" + radius
+                + "，找到 " + results.size() + " 个" + typeName + "怪物。", true);
     }
 
     private void animateBfs(GridPoint start, Faction faction) {
@@ -406,6 +498,9 @@ public final class MainFrame extends JFrame {
         }
         map.clear();
         outposts.clear();
+        monsters.clear();
+        mapPanel.clearMonsterSearch();
+        monsterResultArea.setText("选择“怪物搜索”，再点击地图上的搜索中心。\n结果将按距离从近到远排列。");
 
         for (int y = 2; y <= 15; y++) {
             if (y != 5 && y != 12) {
@@ -433,13 +528,36 @@ public final class MainFrame extends JFrame {
         addPresetOutpost(new GridPoint(20, 5), Faction.RED);
         addPresetOutpost(new GridPoint(25, 5), Faction.RED);
         addPresetOutpost(new GridPoint(24, 11), Faction.RED);
+        addPresetMonsters();
 
-        refresh("示例已重置。蓝方含一块失联领土，可直接点击“连通校验”观察剥离。", false);
+        refresh("示例已重置。地图包含 18 只五种类型的怪物，可使用“怪物搜索”按半径查询。", false);
     }
 
     private void addPresetOutpost(GridPoint point, Faction faction) {
         outposts.add(new Outpost(point, faction));
         map.setOwner(point, faction);
+    }
+
+    private void addPresetMonsters() {
+        monsters.addAll(List.of(
+                new Monster("M01", "荒原狼", MonsterType.BEAST, 3, new GridPoint(1, 7)),
+                new Monster("M02", "岩甲熊", MonsterType.BEAST, 7, new GridPoint(4, 5)),
+                new Monster("M03", "剑齿虎", MonsterType.BEAST, 9, new GridPoint(8, 15)),
+                new Monster("M04", "幽谷巨猿", MonsterType.BEAST, 12, new GridPoint(11, 12)),
+                new Monster("M05", "游荡魂火", MonsterType.UNDEAD, 4, new GridPoint(15, 4)),
+                new Monster("M06", "骸骨骑士", MonsterType.UNDEAD, 10, new GridPoint(17, 8)),
+                new Monster("M07", "墓穴领主", MonsterType.UNDEAD, 16, new GridPoint(20, 2)),
+                new Monster("M08", "深渊小鬼", MonsterType.DEMON, 5, new GridPoint(26, 3)),
+                new Monster("M09", "熔岩恶魔", MonsterType.DEMON, 13, new GridPoint(16, 13)),
+                new Monster("M10", "恐惧魔王", MonsterType.DEMON, 20, new GridPoint(22, 15)),
+                new Monster("M11", "幼年风龙", MonsterType.DRAGON, 8, new GridPoint(27, 10)),
+                new Monster("M12", "赤焰飞龙", MonsterType.DRAGON, 15, new GridPoint(12, 16)),
+                new Monster("M13", "远古巨龙", MonsterType.DRAGON, 25, new GridPoint(7, 2)),
+                new Monster("M14", "水元素", MonsterType.ELEMENTAL, 4, new GridPoint(18, 5)),
+                new Monster("M15", "雷霆元素", MonsterType.ELEMENTAL, 11, new GridPoint(24, 1)),
+                new Monster("M16", "岩石巨灵", MonsterType.ELEMENTAL, 17, new GridPoint(14, 16)),
+                new Monster("M17", "腐化猎犬", MonsterType.DEMON, 8, new GridPoint(10, 7)),
+                new Monster("M18", "冰霜幽魂", MonsterType.UNDEAD, 12, new GridPoint(25, 13))));
     }
 
     private void selectMode(InteractionMode selected) {
@@ -538,7 +656,7 @@ public final class MainFrame extends JFrame {
         });
     }
 
-    private void styleComboBox(JComboBox<Faction> comboBox) {
+    private void styleComboBox(JComboBox<?> comboBox) {
         comboBox.setBackground(CARD_BACKGROUND);
         comboBox.setForeground(TEXT);
         comboBox.setFocusable(false);
@@ -550,5 +668,12 @@ public final class MainFrame extends JFrame {
         editor.getTextField().setBackground(CARD_BACKGROUND);
         editor.getTextField().setForeground(TEXT);
         editor.getTextField().setCaretColor(ACCENT);
+    }
+
+    private record MonsterTypeOption(MonsterType type, String label) {
+        @Override
+        public String toString() {
+            return label;
+        }
     }
 }

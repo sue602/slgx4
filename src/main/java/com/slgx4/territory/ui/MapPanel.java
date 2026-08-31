@@ -6,12 +6,15 @@ import com.slgx4.territory.algorithm.MarchingSquares;
 import com.slgx4.territory.model.Faction;
 import com.slgx4.territory.model.GridMap;
 import com.slgx4.territory.model.GridPoint;
+import com.slgx4.territory.model.Monster;
+import com.slgx4.territory.model.MonsterType;
 import com.slgx4.territory.model.Outpost;
 
 import javax.swing.JPanel;
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
+import java.awt.Composite;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Font;
@@ -19,11 +22,14 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Polygon;
 import java.awt.RenderingHints;
+import java.awt.Shape;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Path2D;
+import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 
 public final class MapPanel extends JPanel {
@@ -35,13 +41,19 @@ public final class MapPanel extends JPanel {
 
     private final GridMap map;
     private final List<Outpost> outposts;
+    private final List<Monster> monsters;
     private Consumer<GridPoint> cellClickHandler = point -> { };
     private GridPoint hovered;
     private String overlayText = "";
+    private GridPoint monsterSearchCenter;
+    private int monsterSearchRadius;
+    private MonsterType monsterSearchType;
+    private Set<Monster> highlightedMonsters = Set.of();
 
-    public MapPanel(GridMap map, List<Outpost> outposts) {
+    public MapPanel(GridMap map, List<Outpost> outposts, List<Monster> monsters) {
         this.map = map;
         this.outposts = outposts;
+        this.monsters = monsters;
         setBackground(BACKGROUND);
         setPreferredSize(new Dimension(920, 620));
         setCursor(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR));
@@ -80,6 +92,23 @@ public final class MapPanel extends JPanel {
         repaint();
     }
 
+    public void showMonsterSearch(GridPoint center, int radius, MonsterType typeFilter,
+                                  Collection<Monster> highlighted) {
+        this.monsterSearchCenter = center;
+        this.monsterSearchRadius = radius;
+        this.monsterSearchType = typeFilter;
+        this.highlightedMonsters = Set.copyOf(highlighted);
+        repaint();
+    }
+
+    public void clearMonsterSearch() {
+        monsterSearchCenter = null;
+        monsterSearchRadius = 0;
+        monsterSearchType = null;
+        highlightedMonsters = Set.of();
+        repaint();
+    }
+
     @Override
     protected void paintComponent(Graphics graphics) {
         super.paintComponent(graphics);
@@ -89,10 +118,13 @@ public final class MapPanel extends JPanel {
 
         drawBaseCells(g, metrics);
         drawTerritory(g, metrics);
+        drawMonsterSearchArea(g, metrics);
         drawHullOverlays(g, metrics);
         drawGrid(g, metrics);
         drawMarchingSquares(g, metrics);
         drawStructures(g, metrics);
+        drawMonsters(g, metrics);
+        drawMonsterSearchCenter(g, metrics);
         drawHover(g, metrics);
         drawOverlay(g);
         g.dispose();
@@ -124,6 +156,41 @@ public final class MapPanel extends JPanel {
             g.setColor(withAlpha(owner.color(), 108));
             g.fillRect(x + 1, y + 1, metrics.cellSize - 1, metrics.cellSize - 1);
         }
+    }
+
+    private void drawMonsterSearchArea(Graphics2D g, Metrics metrics) {
+        if (monsterSearchCenter == null) {
+            return;
+        }
+        Color searchColor = new Color(250, 204, 21);
+        for (GridPoint point : map.points()) {
+            int distance = Math.abs(point.x() - monsterSearchCenter.x())
+                    + Math.abs(point.y() - monsterSearchCenter.y());
+            if (distance <= monsterSearchRadius) {
+                int x = metrics.offsetX + point.x() * metrics.cellSize;
+                int y = metrics.offsetY + point.y() * metrics.cellSize;
+                g.setColor(withAlpha(searchColor, point.equals(monsterSearchCenter) ? 72 : 28));
+                g.fillRect(x + 1, y + 1, metrics.cellSize - 1, metrics.cellSize - 1);
+            }
+        }
+
+        int centerX = centerX(metrics, monsterSearchCenter);
+        int centerY = centerY(metrics, monsterSearchCenter);
+        double reach = (monsterSearchRadius + 0.5) * metrics.cellSize;
+        Path2D diamond = new Path2D.Double();
+        diamond.moveTo(centerX, centerY - reach);
+        diamond.lineTo(centerX + reach, centerY);
+        diamond.lineTo(centerX, centerY + reach);
+        diamond.lineTo(centerX - reach, centerY);
+        diamond.closePath();
+        Shape oldClip = g.getClip();
+        g.clipRect(metrics.offsetX, metrics.offsetY,
+                map.width() * metrics.cellSize, map.height() * metrics.cellSize);
+        g.setColor(withAlpha(searchColor, 205));
+        g.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
+                10, new float[]{6, 5}, 0));
+        g.draw(diamond);
+        g.setClip(oldClip);
     }
 
     private void drawHullOverlays(Graphics2D g, Metrics metrics) {
@@ -188,6 +255,68 @@ public final class MapPanel extends JPanel {
         for (Outpost outpost : outposts) {
             drawOutpost(g, metrics, outpost);
         }
+    }
+
+    private void drawMonsters(Graphics2D g, Metrics metrics) {
+        for (Monster monster : monsters) {
+            GridPoint point = monster.position();
+            if (!map.contains(point)) {
+                continue;
+            }
+            Composite previousComposite = g.getComposite();
+            if (monsterSearchCenter != null && !highlightedMonsters.contains(monster)) {
+                boolean matchesSelectedType = monsterSearchType == null || monster.type() == monsterSearchType;
+                float opacity = matchesSelectedType ? 0.28f : 0.10f;
+                g.setComposite(AlphaComposite.SrcOver.derive(opacity));
+            }
+            int centerX = centerX(metrics, point);
+            int centerY = centerY(metrics, point);
+            int radius = Math.max(7, metrics.cellSize / 3);
+            if (highlightedMonsters.contains(monster)) {
+                int glowRadius = radius + 5;
+                g.setColor(new Color(250, 204, 21, 75));
+                g.fill(new Ellipse2D.Double(centerX - glowRadius, centerY - glowRadius,
+                        glowRadius * 2.0, glowRadius * 2.0));
+                g.setColor(new Color(254, 240, 138));
+                g.setStroke(new BasicStroke(2.5f));
+                g.draw(new Ellipse2D.Double(centerX - radius - 2, centerY - radius - 2,
+                        (radius + 2) * 2.0, (radius + 2) * 2.0));
+            }
+
+            g.setColor(new Color(12, 17, 24));
+            g.fill(new Ellipse2D.Double(centerX - radius, centerY - radius, radius * 2.0, radius * 2.0));
+            g.setColor(monster.type().color());
+            g.setStroke(new BasicStroke(2));
+            g.draw(new Ellipse2D.Double(centerX - radius, centerY - radius, radius * 2.0, radius * 2.0));
+            g.setFont(getFont().deriveFont(Font.BOLD, Math.max(10f, metrics.cellSize * 0.38f)));
+            g.setColor(monster.type().color());
+            String symbol = monster.type().symbol();
+            g.drawString(symbol, centerX - g.getFontMetrics().stringWidth(symbol) / 2,
+                    centerY + g.getFontMetrics().getAscent() / 3);
+
+            String level = Integer.toString(monster.level());
+            g.setFont(getFont().deriveFont(Font.BOLD, Math.max(8f, metrics.cellSize * 0.24f)));
+            int badgeWidth = g.getFontMetrics().stringWidth(level) + 5;
+            int badgeHeight = g.getFontMetrics().getHeight() - 1;
+            int badgeX = centerX + radius - badgeWidth / 2;
+            int badgeY = centerY + radius - badgeHeight / 2;
+            g.setColor(new Color(8, 12, 18, 225));
+            g.fillRoundRect(badgeX, badgeY, badgeWidth, badgeHeight, 6, 6);
+            g.setColor(Color.WHITE);
+            g.drawString(level, badgeX + 3, badgeY + g.getFontMetrics().getAscent());
+            g.setComposite(previousComposite);
+        }
+    }
+
+    private void drawMonsterSearchCenter(Graphics2D g, Metrics metrics) {
+        if (monsterSearchCenter == null) {
+            return;
+        }
+        int x = metrics.offsetX + monsterSearchCenter.x() * metrics.cellSize;
+        int y = metrics.offsetY + monsterSearchCenter.y() * metrics.cellSize;
+        g.setColor(new Color(254, 240, 138));
+        g.setStroke(new BasicStroke(2.5f));
+        g.drawRect(x + 2, y + 2, metrics.cellSize - 4, metrics.cellSize - 4);
     }
 
     private void drawCore(Graphics2D g, Metrics metrics, GridPoint point, Faction faction) {
