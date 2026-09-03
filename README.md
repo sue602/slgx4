@@ -2,6 +2,9 @@
 
 一个使用 Java 25、Maven 和 Swing 编写的可交互桌面演示，用网格地图展示 SLG 游戏中常见的联盟领土算法。
 
+项目还包含 `com.slgx4.aoi.algorithm`：对 cloudwu/aoi 热点对 AOI 算法的 Java 语义复刻，
+以及 `com.slgx4.aoi.AOIDemoApplication` 独立 Swing 入口。
+
 ## 已实现
 
 - **BFS / Flood Fill**：点击地图后按距离逐层播放扩张动画；山脉和敌方领土不可穿越。
@@ -11,6 +14,7 @@
 - **凸包圈地**：对联盟哨塔执行 Andrew 单调链凸包，再用射线法填充多边形内部格子。
 - **Voronoi 据点分区**：按主城和哨塔的最近欧氏距离分配领土；不同联盟的等距格保持中立。
 - **怪物范围搜索**：预置五类怪物，选择地图中心、类型和半径 R，以曼哈顿距离搜索并按距离排序、高亮结果。
+- **动态 AOI 热点对**：复刻 watcher/marker、`R/2` 关键点、`R..2R` 热点对、版本失效与进入事件。
 
 ## 环境
 
@@ -30,6 +34,12 @@ mvn clean package
 
 ```powershell
 java -jar target/territory-demo-1.0.0.jar
+```
+
+运行独立 AOI 图形演示：
+
+```powershell
+java -cp target/territory-demo-1.0.0.jar com.slgx4.aoi.AOIDemoApplication
 ```
 
 运行测试：
@@ -66,5 +76,9 @@ src/main/java/com/slgx4/territory/
 ├── model/       # 网格、阵营、坐标和据点模型
 └── ui/          # Swing 界面、绘制和交互动画
 ```
+
+AOI 核心算法位于 `src/main/java/com/slgx4/aoi/algorithm/`，Swing 演示位于
+`src/main/java/com/slgx4/aoi/`。实现/API 对照和演示说明见
+[`docs/AOI_JAVA_PORT.md`](docs/AOI_JAVA_PORT.md)。
 
 算法层不依赖 Swing，可直接抽取到游戏服务端；桌面层只负责输入、动画和渲染。
